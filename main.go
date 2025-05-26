@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	version := "0.3.16"
+	version := "0.3.17"
 
 	showVersion := flag.Bool("v", false, "print version")
 	help := flag.Bool("h", false, "show help")
