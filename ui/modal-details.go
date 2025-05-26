@@ -17,14 +17,33 @@ func DetailsModal(app *tview.Application, frame *tview.Frame, table *tview.Table
 		namespace := strings.TrimSpace(parts[4])
 		message := strings.TrimSpace(parts[5])
 
+		defaultStatusColour := "[white]"
+		switch status {
+		case "Warning":
+			defaultStatusColour = "[yellow]"
+		}
+
+		defaultActionColour := "[white]"
+		switch action {
+		case "Created", "SuccessfulCreate", "Completed":
+			defaultActionColour = "[green]"
+		case "Started", "Pulled", "Pulling":
+			defaultActionColour = "[blue]"
+		case "Killing", "BackOff", "Unhealthy", "FailedToRetrieveImagePullSecret":
+			defaultActionColour = "[red]"
+		}
+
 		detail := fmt.Sprintf(
 			"[blue]Time:      [white]%s\n"+
 				"[blue]Resource:  [white]%s\n"+
 				"[blue]Namespace: [white]%s\n"+
-				"[blue]Status:    [white]%s\n"+
-				"[blue]Action:    [white]%s\n"+
+				"[blue]Status:    %s%s\n"+
+				"[blue]Action:    %s%s\n"+
 				"[blue]Message:   [white]%s\n",
-			timeStr, resource, namespace, status, action, message,
+			timeStr, resource, namespace,
+			defaultStatusColour, status,
+			defaultActionColour, action,
+			message,
 		)
 
 		detailView := tview.NewTextView()
