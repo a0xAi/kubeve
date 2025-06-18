@@ -122,20 +122,20 @@ func StartUI(version string, overrideNamespace string) {
 					event.Namespace,
 					event.Message,
 				)
-				if autoScroll {
-					allEvents = append(allEvents, msg)
-					if strings.Contains(msg, filterText) &&
-						(namespace == metav1.NamespaceAll || event.Namespace == namespace) {
-						parts := strings.SplitN(msg, "│", 6)
-						if len(parts) == 6 {
-							row := table.GetRowCount()
-							renderRow(table, row, parts, ColumnOptions{
-								Timestamp: showTimestampColumn,
-								Namespace: showNamespaceColumn,
-								Status:    showStatusColumn,
-								Action:    showActionColumn,
-								Resource:  showResourceColumn,
-							})
+				allEvents = append(allEvents, msg)
+				if strings.Contains(msg, filterText) &&
+					(namespace == metav1.NamespaceAll || event.Namespace == namespace) {
+					parts := strings.SplitN(msg, "│", 6)
+					if len(parts) == 6 {
+						row := table.GetRowCount()
+						renderRow(table, row, parts, ColumnOptions{
+							Timestamp: showTimestampColumn,
+							Namespace: showNamespaceColumn,
+							Status:    showStatusColumn,
+							Action:    showActionColumn,
+							Resource:  showResourceColumn,
+						})
+						if autoScroll {
 							table.ScrollToEnd()
 							table.Select(table.GetRowCount()-1, 0)
 						}
