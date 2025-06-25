@@ -33,4 +33,5 @@ config:
     disableLogo: false
   theme:
     backgroundColor: '#0000ff'
+    textColor: '#00ff00'
 ```

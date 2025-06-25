@@ -69,7 +69,8 @@ func NewHeader(
 	headerFlex := tview.NewFlex().
 		AddItem(infoView, 0, 2, false).
 		AddItem(recentNs, 0, 1, false).
-		AddItem(shortcuts, 0, 2, false)
+		AddItem(shortcuts, 0, 2, false).
+		AddItem(shortcuts2, 0, 2, false)
 	if !disableLogo {
 		headerFlex.AddItem(logoView, 0, 2, false)
 	}
