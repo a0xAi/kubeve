@@ -177,7 +177,11 @@ func StartUI(version string, overrideNamespace string) {
 			if filterText != "" {
 				filterTableText = "[yellow] [Filter: " + filterText + "]"
 			}
-			table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓")
+			if autoScroll {
+				table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓")
+			} else {
+				table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗")
+			}
 			table.Clear()
 			renderTableHeader(table, ColumnOptions{
 				Timestamp: showTimestampColumn,
