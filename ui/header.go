@@ -18,12 +18,12 @@ type Header struct {
 func NewHeader(
 	clusterName, namespace, kubeRev string,
 	recentNamespaces []string,
+	disableLogo bool,
 ) *Header {
 	// Context/info pane
 	infoView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignLeft)
-	infoView.SetBackgroundColor(0x000000)
 	namespaceText := namespace
 	if namespace == "" {
 		namespaceText = "All namespaces"
@@ -40,7 +40,6 @@ func NewHeader(
 	recentNs := tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignLeft)
-	recentNs.SetBackgroundColor(0x000000)
 	var recentLines []string
 	recentLines = append(recentLines, "[blue]<0> [white]All Namespaces")
 	for i, ns := range recentNamespaces {
@@ -55,27 +54,25 @@ func NewHeader(
 	shortcuts := tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignLeft)
-	shortcuts.SetBackgroundColor(0x000000)
 	shortcuts.SetText(ActionShortcuts())
 
 	shortcuts2 := tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignLeft)
-	shortcuts2.SetBackgroundColor(0x000000)
 	shortcuts2.SetText(ColumShortcuts())
 
 	logoView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignRight)
-	logoView.SetBackgroundColor(0x000000)
 	logoView.SetText(LogoText())
 
 	headerFlex := tview.NewFlex().
 		AddItem(infoView, 0, 2, false).
 		AddItem(recentNs, 0, 1, false).
-		AddItem(shortcuts, 0, 2, false).
-		AddItem(shortcuts2, 0, 2, false).
-		AddItem(logoView, 0, 2, false)
+		AddItem(shortcuts, 0, 2, false)
+	if !disableLogo {
+		headerFlex.AddItem(logoView, 0, 2, false)
+	}
 
 	return &Header{
 		Flex:        headerFlex,

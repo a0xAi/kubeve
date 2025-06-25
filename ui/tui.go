@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/a0xAi/kubeve/config"
 	"github.com/a0xAi/kubeve/kube"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -19,6 +21,16 @@ func StartUI(version string, overrideNamespace string) {
 	var allEvents []string
 	var recentNamespaces []string
 	var header *Header
+	var bgCol tcell.Color
+	var textCol tcell.Color
+	cfg := config.Load()
+	if val, err := strconv.ParseInt(strings.TrimPrefix(cfg.Theme.BackgroundColor, "#"), 16, 32); err == nil {
+		bgCol = tcell.ColorIsRGB | tcell.ColorValid | tcell.Color(val)
+	}
+
+	if val, err := strconv.ParseInt(strings.TrimPrefix(cfg.Theme.TextColor, "#"), 16, 32); err == nil {
+		textCol = tcell.ColorIsRGB | tcell.ColorValid | tcell.Color(val)
+	}
 
 	namespace, rawConfig, kubeClient, namespaceList, err := kube.Kinit(overrideNamespace)
 	if err != nil {
@@ -34,6 +46,7 @@ func StartUI(version string, overrideNamespace string) {
 	showStatusColumn := true
 	showActionColumn := true
 	showResourceColumn := true
+	filterVisible := false
 
 	versionInfo, verErr := kubeClient.Discovery().ServerVersion()
 	if verErr != nil {
@@ -42,6 +55,10 @@ func StartUI(version string, overrideNamespace string) {
 	}
 
 	app := tview.NewApplication()
+	tview.Styles.PrimitiveBackgroundColor = bgCol
+	tview.Styles.ContrastBackgroundColor = bgCol
+	tview.Styles.PrimaryTextColor = textCol
+
 	app.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
 		screen.Clear()
 		return false
@@ -49,7 +66,7 @@ func StartUI(version string, overrideNamespace string) {
 	flex := tview.NewFlex().SetDirection(tview.FlexRow)
 	frame := tview.NewFrame(nil).
 		SetBorders(1, 1, 1, 1, 1, 1)
-	frame.SetBackgroundColor(0x000000)
+
 	frame.SetPrimitive(flex)
 
 	header = NewHeader(
@@ -57,6 +74,7 @@ func StartUI(version string, overrideNamespace string) {
 		namespace,
 		versionInfo.GitVersion,
 		recentNamespaces,
+		cfg.Flags.DisableLogo,
 	)
 
 	table := NewTable(" [::b][green]Autoscroll ✓ ")
@@ -149,11 +167,17 @@ func StartUI(version string, overrideNamespace string) {
 	filter := NewFilter()
 
 	filterContainer := tview.NewFlex().AddItem(filter, 0, 1, true)
-	filterContainer.SetBorderStyle(tcell.StyleDefault.Foreground(0xFF0000))
+	filterContainer.SetBorder(true)
+	filterContainer.SetTitle("Filter").SetTitleAlign(tview.AlignLeft)
 
 	filter.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			filterText = filter.GetText()
+			filterTableText := ""
+			if filterText != "" {
+				filterTableText = "[yellow] [Filter: " + filterText + "]"
+			}
+			table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓")
 			table.Clear()
 			renderTableHeader(table, ColumnOptions{
 				Timestamp: showTimestampColumn,
@@ -169,6 +193,8 @@ func StartUI(version string, overrideNamespace string) {
 				Action:    showActionColumn,
 				Resource:  showResourceColumn,
 			})
+			flex.ResizeItem(filterContainer, 0, 0)
+			filterVisible = false
 			app.SetFocus(table)
 		}
 	})
@@ -181,10 +207,15 @@ func StartUI(version string, overrideNamespace string) {
 		switch {
 		case event.Key() == tcell.KeyCtrlS:
 			autoScroll = !autoScroll
+			filterText = filter.GetText()
+			filterTableText := ""
+			if filterText != "" {
+				filterTableText = "[yellow] [Filter: " + filterText + "]"
+			}
 			if autoScroll {
-				table.SetTitle("[::b][green]Autoscroll ✓")
+				table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓")
 			} else {
-				table.SetTitle("[::b][red]Autoscroll ✗")
+				table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗")
 			}
 			return nil
 		case event.Key() == tcell.KeyCtrlB:
@@ -192,8 +223,16 @@ func StartUI(version string, overrideNamespace string) {
 			table.Select(table.GetRowCount()-1, 0)
 			return nil
 		case event.Rune() == '/':
-			filter.SetText("")
-			app.SetFocus(filter)
+			if filterVisible {
+				flex.ResizeItem(filterContainer, 0, 0)
+				filterVisible = false
+				app.SetFocus(table)
+			} else {
+				flex.ResizeItem(filterContainer, 3, 0)
+				filterVisible = true
+				filter.SetText("")
+				app.SetFocus(filter)
+			}
 			return nil
 		case event.Key() == tcell.KeyCtrlN:
 			NamespacesModal(app, frame, table, namespaceList, updateNamespace)
@@ -270,7 +309,7 @@ func StartUI(version string, overrideNamespace string) {
 
 	flex.AddItem(header.Flex, 7, 0, false).
 		AddItem(table, 0, 1, false).
-		AddItem(filterContainer, 1, 0, false)
+		AddItem(filterContainer, 0, 0, false)
 
 	app.SetRoot(frame, true)
 	app.SetFocus(table)

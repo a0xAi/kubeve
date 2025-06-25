@@ -20,3 +20,17 @@
   - save it to somewhere in your PATH,
   - or save them to a directory, then create symlinks to `kubeve` from somewhere in your PATH, like /usr/local/bin
 - Make `kubeve` executable (chmod +x ...)
+
+## Configuration
+
+`kubeve` looks for a YAML configuration file at `~/.kubeve/config.yaml` on start. If the file is not present, built in defaults are used.
+
+Example default configuration:
+
+```yaml
+config:
+  flags:
+    disableLogo: false
+  theme:
+    backgroundColor: '#0000ff'
+```
