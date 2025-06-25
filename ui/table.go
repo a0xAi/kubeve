@@ -16,11 +16,11 @@ type ColumnOptions struct {
 	Resource  bool
 }
 
-func NewTable(status string) *tview.Table {
+func NewTable(status string, bgColor tcell.Color) *tview.Table {
 	table := tview.NewTable().SetBorders(false).SetFixed(1, 0)
 	table.SetSelectable(true, false)
 	table.SetBorder(true).SetTitle(status)
-	table.SetBackgroundColor(0x000000)
+	table.SetBackgroundColor(bgColor)
 	return table
 }
 

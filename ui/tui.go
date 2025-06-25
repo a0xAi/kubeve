@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/a0xAi/kubeve/config"
 	"github.com/a0xAi/kubeve/kube"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -19,6 +21,12 @@ func StartUI(version string, overrideNamespace string) {
 	var allEvents []string
 	var recentNamespaces []string
 	var header *Header
+
+	cfg := config.Load()
+	bgCol := tcell.Color(0x000000)
+	if val, err := strconv.ParseInt(strings.TrimPrefix(cfg.Theme.BackgroundColor, "#"), 16, 32); err == nil {
+		bgCol = tcell.Color(val)
+	}
 
 	namespace, rawConfig, kubeClient, namespaceList, err := kube.Kinit(overrideNamespace)
 	if err != nil {
@@ -49,7 +57,7 @@ func StartUI(version string, overrideNamespace string) {
 	flex := tview.NewFlex().SetDirection(tview.FlexRow)
 	frame := tview.NewFrame(nil).
 		SetBorders(1, 1, 1, 1, 1, 1)
-	frame.SetBackgroundColor(0x000000)
+	frame.SetBackgroundColor(bgCol)
 	frame.SetPrimitive(flex)
 
 	header = NewHeader(
@@ -57,9 +65,11 @@ func StartUI(version string, overrideNamespace string) {
 		namespace,
 		versionInfo.GitVersion,
 		recentNamespaces,
+		cfg.Flags.DisableLogo,
+		bgCol,
 	)
 
-	table := NewTable(" [::b][green]Autoscroll ✓ ")
+	table := NewTable(" [::b][green]Autoscroll ✓ ", bgCol)
 
 	var updateNamespace func(string)
 
