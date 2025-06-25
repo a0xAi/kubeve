@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -124,7 +125,8 @@ func StartUI(version string, overrideNamespace string) {
 				)
 				if autoScroll {
 					allEvents = append(allEvents, msg)
-					if strings.Contains(msg, filterText) &&
+					matched, _ := regexp.MatchString(filterText, msg)
+					if matched &&
 						(namespace == metav1.NamespaceAll || event.Namespace == namespace) {
 						parts := strings.SplitN(msg, "│", 6)
 						if len(parts) == 6 {
@@ -172,6 +174,10 @@ func StartUI(version string, overrideNamespace string) {
 	})
 
 	handleInput := func(event *tcell.EventKey) *tcell.EventKey {
+		// If filter is focused, let normal typing work and ignore shortcuts.
+		if app.GetFocus() == filter {
+			return event
+		}
 		switch {
 		case event.Key() == tcell.KeyCtrlS:
 			autoScroll = !autoScroll
