@@ -32,6 +32,20 @@ config:
   flags:
     disableLogo: false
   theme:
-    backgroundColor: '#0000ff'
-    textColor: '#00ff00'
+    name: midnight
+    backgroundColor: '#000000'
+    textColor: '#ffffff'
 ```
+
+Built-in themes (select in app with `Ctrl+T` or `:theme`):
+
+- `midnight`
+- `ocean`
+- `forest`
+- `sunset`
+- `solarized-dark`
+- `solarized-light`
+- `mono-light`
+- `terminal-green`
+- `cobalt`
+- `ember`

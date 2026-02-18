@@ -29,13 +29,8 @@ func StartUI(version string, overrideNamespace string) {
 	var bgCol tcell.Color
 	var textCol tcell.Color
 	cfg := config.Load()
-	if val, err := strconv.ParseInt(strings.TrimPrefix(cfg.Theme.BackgroundColor, "#"), 16, 32); err == nil {
-		bgCol = tcell.ColorIsRGB | tcell.ColorValid | tcell.Color(val)
-	}
-
-	if val, err := strconv.ParseInt(strings.TrimPrefix(cfg.Theme.TextColor, "#"), 16, 32); err == nil {
-		textCol = tcell.ColorIsRGB | tcell.ColorValid | tcell.Color(val)
-	}
+	currentTheme := config.ResolveTheme(cfg.Theme)
+	bgCol, textCol = parseThemeColors(currentTheme)
 
 	namespace, rawConfig, kubeClient, namespaceList, err := kube.Kinit(overrideNamespace)
 	if err != nil {
@@ -110,10 +105,15 @@ func StartUI(version string, overrideNamespace string) {
 		if wrapMessages {
 			wrapTableText = "[cyan]Wrap"
 		}
+		themeLabel := currentTheme.Name
+		if themeLabel == "" {
+			themeLabel = "custom"
+		}
+		themeTableText := "[gray]Theme:" + themeLabel
 		if autoScroll {
-			table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓ " + aggregateTableText + " " + wrapTableText)
+			table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓ " + aggregateTableText + " " + wrapTableText + " " + themeTableText)
 		} else {
-			table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗ " + aggregateTableText + " " + wrapTableText)
+			table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗ " + aggregateTableText + " " + wrapTableText + " " + themeTableText)
 		}
 	}
 
@@ -244,6 +244,70 @@ func StartUI(version string, overrideNamespace string) {
 	filterContainer.SetBorder(true)
 	filterContainer.SetTitle("Filter").SetTitleAlign(tview.AlignLeft)
 
+	applyTheme := func(theme config.Theme) {
+		bgCol, textCol = parseThemeColors(theme)
+		tview.Styles.PrimitiveBackgroundColor = bgCol
+		tview.Styles.ContrastBackgroundColor = bgCol
+		tview.Styles.PrimaryTextColor = textCol
+
+		frame.SetBackgroundColor(bgCol)
+		frame.SetBorderColor(textCol)
+		flex.SetBackgroundColor(bgCol)
+		filterContainer.SetBackgroundColor(bgCol)
+		filterContainer.SetBorderColor(textCol)
+
+		table.SetBackgroundColor(bgCol)
+		table.SetBorderColor(textCol)
+		table.SetTitleColor(textCol)
+
+		filter.SetBackgroundColor(bgCol)
+		filter.SetLabelColor(textCol)
+		filter.SetFieldTextColor(textCol)
+		filter.SetFieldBackgroundColor(bgCol)
+
+		header.Flex.SetBackgroundColor(bgCol)
+		header.InfoView.SetBackgroundColor(bgCol)
+		header.InfoView.SetTextColor(textCol)
+		header.RecentNSBox.SetBackgroundColor(bgCol)
+		header.RecentNSBox.SetTextColor(textCol)
+		if header.ShortcutsView != nil {
+			header.ShortcutsView.SetBackgroundColor(bgCol)
+			header.ShortcutsView.SetTextColor(textCol)
+		}
+		if header.ColumnsView != nil {
+			header.ColumnsView.SetBackgroundColor(bgCol)
+			header.ColumnsView.SetTextColor(textCol)
+		}
+		if header.LogoView != nil {
+			header.LogoView.SetBackgroundColor(bgCol)
+			header.LogoView.SetTextColor(textCol)
+		}
+	}
+
+	themeNames := config.ThemeNames()
+
+	setTheme := func(theme config.Theme) {
+		currentTheme = config.ResolveTheme(theme)
+		cfg.Theme = currentTheme
+		applyTheme(currentTheme)
+		updateTableTitle()
+		if err := config.Save(cfg); err != nil {
+			table.SetTitle(fmt.Sprintf("%s [red](theme save error: %v)", table.GetTitle(), err))
+		}
+	}
+
+	openThemeSelector := func() {
+		NamespacesModal(app, frame, table, themeNames, func(themeName string) {
+			theme, ok := config.ThemeByName(themeName)
+			if !ok {
+				return
+			}
+			setTheme(theme)
+			app.SetFocus(table)
+		})
+	}
+	applyTheme(currentTheme)
+
 	filter.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			filterText = filter.GetText()
@@ -297,6 +361,30 @@ func StartUI(version string, overrideNamespace string) {
 			return "", false
 		}
 		return best, true
+	}
+
+	resolveTheme := func(raw string) (config.Theme, bool) {
+		query := strings.TrimSpace(raw)
+		if query == "" {
+			return config.Theme{}, false
+		}
+		if theme, ok := config.ThemeByName(query); ok {
+			return theme, true
+		}
+
+		best := ""
+		bestScore := 0
+		for _, name := range themeNames {
+			score, ok := fuzzyMatchScore(query, name)
+			if ok && score > bestScore {
+				best = name
+				bestScore = score
+			}
+		}
+		if best == "" {
+			return config.Theme{}, false
+		}
+		return config.ThemeByName(best)
 	}
 
 	toggleAutoScroll := func() {
@@ -464,6 +552,26 @@ func StartUI(version string, overrideNamespace string) {
 				},
 			},
 			{
+				Name:        "theme",
+				Aliases:     []string{"th"},
+				Description: "Select built-in theme: theme <name>.",
+				AcceptsArg:  true,
+				Run: func(arg string) string {
+					if strings.TrimSpace(arg) == "" {
+						openThemeSelector()
+						return "Opened theme selector"
+					}
+					theme, ok := resolveTheme(arg)
+					if !ok {
+						updateTableTitle()
+						table.SetTitle(fmt.Sprintf("%s [red](theme not found: %s)", table.GetTitle(), strings.TrimSpace(arg)))
+						return "Theme not found"
+					}
+					setTheme(theme)
+					return "Theme updated"
+				},
+			},
+			{
 				Name:        "filter",
 				Aliases:     []string{"f"},
 				Description: "Set filter text: filter <text>.",
@@ -541,6 +649,9 @@ func StartUI(version string, overrideNamespace string) {
 		case event.Key() == tcell.KeyCtrlB:
 			table.ScrollToEnd()
 			table.Select(table.GetRowCount()-1, 0)
+			return nil
+		case event.Key() == tcell.KeyCtrlT:
+			openThemeSelector()
 			return nil
 		case event.Rune() == ':':
 			openCommandPalette()
@@ -631,4 +742,22 @@ func StartUI(version string, overrideNamespace string) {
 	if watchCancel != nil {
 		watchCancel()
 	}
+}
+
+func parseThemeColors(theme config.Theme) (tcell.Color, tcell.Color) {
+	bg := parseHexColor(theme.BackgroundColor, tcell.ColorBlack)
+	text := parseHexColor(theme.TextColor, tcell.ColorWhite)
+	return bg, text
+}
+
+func parseHexColor(raw string, fallback tcell.Color) tcell.Color {
+	value := strings.TrimSpace(strings.TrimPrefix(raw, "#"))
+	if len(value) != 6 {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 16, 32)
+	if err != nil {
+		return fallback
+	}
+	return tcell.ColorIsRGB | tcell.ColorValid | tcell.Color(parsed)
 }

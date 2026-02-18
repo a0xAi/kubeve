@@ -9,9 +9,12 @@ import (
 
 // Header exposes the header flex and infoView for live updates.
 type Header struct {
-	Flex        *tview.Flex
-	InfoView    *tview.TextView
-	RecentNSBox *tview.TextView
+	Flex          *tview.Flex
+	InfoView      *tview.TextView
+	RecentNSBox   *tview.TextView
+	ShortcutsView *tview.TextView
+	ColumnsView   *tview.TextView
+	LogoView      *tview.TextView
 }
 
 // NewHeader builds the top-bar with context info, shortcuts and ASCII logo.
@@ -76,15 +79,19 @@ func NewHeader(
 	}
 
 	return &Header{
-		Flex:        headerFlex,
-		InfoView:    infoView,
-		RecentNSBox: recentNs,
+		Flex:          headerFlex,
+		InfoView:      infoView,
+		RecentNSBox:   recentNs,
+		ShortcutsView: shortcuts,
+		ColumnsView:   shortcuts2,
+		LogoView:      logoView,
 	}
 }
 
 func ActionShortcuts() string {
 	items := []struct{ key, desc string }{
 		{":", "Command palette"},
+		{"<ctrl+t>", "Theme picker"},
 		{"</>", "Toggle filter"},
 		{"<w>", "Toggle wrap"},
 		{"<enter>", "Open drill-down"},
