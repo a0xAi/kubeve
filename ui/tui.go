@@ -49,6 +49,7 @@ func StartUI(version string, overrideNamespace string) {
 	showStatusColumn := true
 	showActionColumn := true
 	showResourceColumn := true
+	aggregateMode := false
 	filterVisible := false
 
 	versionInfo, verErr := kubeClient.Discovery().ServerVersion()
@@ -89,6 +90,7 @@ func StartUI(version string, overrideNamespace string) {
 			Status:    showStatusColumn,
 			Action:    showActionColumn,
 			Resource:  showResourceColumn,
+			Aggregate: aggregateMode,
 		}
 	}
 
@@ -97,16 +99,24 @@ func StartUI(version string, overrideNamespace string) {
 		if filterText != "" {
 			filterTableText = "[yellow] [Filter: " + filterText + "]"
 		}
+		aggregateTableText := "[gray]Raw"
+		if aggregateMode {
+			aggregateTableText = "[cyan]Aggregate"
+		}
 		if autoScroll {
-			table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓")
+			table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓ " + aggregateTableText)
 		} else {
-			table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗")
+			table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗ " + aggregateTableText)
 		}
 	}
 
 	refreshTable := func() {
-		visibleEvents = filterEvents(allEvents, filterText)
-		renderTable(table, allEvents, filterText, currentColumns())
+		displayEvents := allEvents
+		if aggregateMode {
+			displayEvents = aggregateEvents(allEvents)
+		}
+		visibleEvents = filterEvents(displayEvents, filterText)
+		renderTable(table, visibleEvents, "", currentColumns())
 	}
 
 	var updateNamespace func(string)
@@ -182,15 +192,23 @@ func StartUI(version string, overrideNamespace string) {
 
 					if autoScroll {
 						allEvents = append(allEvents, msg)
-						if matchesFilter(msg, filterText) &&
-							(namespace == metav1.NamespaceAll || event.Namespace == namespace) {
-							visibleEvents = append(visibleEvents, msg)
-							parts := strings.SplitN(msg, "│", 6)
-							if len(parts) == 6 {
-								row := table.GetRowCount()
-								renderRow(table, row, parts, currentColumns())
-								table.ScrollToEnd()
-								table.Select(table.GetRowCount()-1, 0)
+						if aggregateMode {
+							refreshTable()
+							if table.GetRowCount() > 1 {
+								table.ScrollToBeginning()
+								table.Select(1, 0)
+							}
+						} else {
+							if matchesFilter(msg, filterText) &&
+								(namespace == metav1.NamespaceAll || event.Namespace == namespace) {
+								visibleEvents = append(visibleEvents, msg)
+								parts := strings.SplitN(msg, "│", 6)
+								if len(parts) == 6 {
+									row := table.GetRowCount()
+									renderRow(table, row, parts, currentColumns())
+									table.ScrollToEnd()
+									table.Select(table.GetRowCount()-1, 0)
+								}
 							}
 						}
 					}
@@ -270,6 +288,15 @@ func StartUI(version string, overrideNamespace string) {
 			showResourceColumn = !showResourceColumn
 			refreshTable()
 			return nil
+		case event.Rune() == 'G':
+			aggregateMode = !aggregateMode
+			updateTableTitle()
+			refreshTable()
+			if aggregateMode && table.GetRowCount() > 1 {
+				table.ScrollToBeginning()
+				table.Select(1, 0)
+			}
+			return nil
 		case event.Rune() == 'q', event.Key() == tcell.KeyCtrlC:
 			if watchCancel != nil {
 				watchCancel()
@@ -301,6 +328,7 @@ func StartUI(version string, overrideNamespace string) {
 		}
 	})
 
+	updateTableTitle()
 	updateNamespace(namespace)
 
 	flex.AddItem(header.Flex, 7, 0, false).

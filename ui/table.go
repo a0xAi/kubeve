@@ -2,7 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -14,6 +17,7 @@ type ColumnOptions struct {
 	Status    bool
 	Action    bool
 	Resource  bool
+	Aggregate bool
 }
 
 func NewTable(status string) *tview.Table {
@@ -27,7 +31,11 @@ func NewTable(status string) *tview.Table {
 func renderTableHeader(table *tview.Table, opts ColumnOptions) {
 	col := 0
 	if opts.Timestamp {
-		table.SetCell(0, col, tview.NewTableCell("TIME").
+		label := "TIME"
+		if opts.Aggregate {
+			label = "LAST SEEN"
+		}
+		table.SetCell(0, col, tview.NewTableCell(label).
 			SetSelectable(false).SetAttributes(tcell.AttrBold).SetExpansion(1))
 		col++
 	}
@@ -37,12 +45,17 @@ func renderTableHeader(table *tview.Table, opts ColumnOptions) {
 		col++
 	}
 	if opts.Status {
-		table.SetCell(0, col, tview.NewTableCell("STATUS").
+		label := "STATUS"
+		if opts.Aggregate {
+			label = "COUNT"
+		}
+		table.SetCell(0, col, tview.NewTableCell(label).
 			SetSelectable(false).SetAttributes(tcell.AttrBold).SetExpansion(1))
 		col++
 	}
 	if opts.Action {
-		table.SetCell(0, col, tview.NewTableCell("ACTION").
+		label := "ACTION"
+		table.SetCell(0, col, tview.NewTableCell(label).
 			SetSelectable(false).SetAttributes(tcell.AttrBold).SetExpansion(1))
 		col++
 	}
@@ -51,7 +64,11 @@ func renderTableHeader(table *tview.Table, opts ColumnOptions) {
 			SetSelectable(false).SetAttributes(tcell.AttrBold).SetExpansion(2))
 		col++
 	}
-	table.SetCell(0, col, tview.NewTableCell("MESSAGE").
+	messageLabel := "MESSAGE"
+	if opts.Aggregate {
+		messageLabel = "LAST MESSAGE"
+	}
+	table.SetCell(0, col, tview.NewTableCell(messageLabel).
 		SetSelectable(false).SetAttributes(tcell.AttrBold).SetExpansion(5))
 }
 
@@ -109,6 +126,96 @@ func filterEvents(events []string, filterText string) []string {
 		}
 	}
 	return filtered
+}
+
+type aggregatedEvent struct {
+	namespace   string
+	resource    string
+	reason      string
+	lastMessage string
+	lastSeen    time.Time
+	lastType    string
+	count       int
+}
+
+func aggregateEvents(events []string) []string {
+	groups := make(map[string]*aggregatedEvent, len(events))
+	for _, line := range events {
+		parts := strings.SplitN(line, "│", 6)
+		if len(parts) != 6 {
+			continue
+		}
+
+		lastSeenText := strings.TrimSpace(parts[0])
+		resource := strings.TrimSpace(parts[1])
+		eventType := strings.TrimSpace(parts[2])
+		reason := strings.TrimSpace(parts[3])
+		namespace := strings.TrimSpace(parts[4])
+		message := strings.TrimSpace(parts[5])
+
+		key := namespace + "|" + resource + "|" + reason
+		group, exists := groups[key]
+		if !exists {
+			group = &aggregatedEvent{
+				namespace: namespace,
+				resource:  resource,
+				reason:    reason,
+				lastType:  eventType,
+			}
+			groups[key] = group
+		}
+		group.count++
+
+		parsedTime, err := time.Parse(time.RFC3339, lastSeenText)
+		if err != nil {
+			parsedTime = time.Time{}
+		}
+		if group.lastSeen.IsZero() || parsedTime.After(group.lastSeen) {
+			group.lastSeen = parsedTime
+			group.lastType = eventType
+			group.lastMessage = message
+		}
+	}
+
+	summary := make([]*aggregatedEvent, 0, len(groups))
+	for _, group := range groups {
+		summary = append(summary, group)
+	}
+	sort.Slice(summary, func(i, j int) bool {
+		if summary[i].count != summary[j].count {
+			return summary[i].count > summary[j].count
+		}
+		if !summary[i].lastSeen.Equal(summary[j].lastSeen) {
+			return summary[i].lastSeen.After(summary[j].lastSeen)
+		}
+		if summary[i].namespace != summary[j].namespace {
+			return summary[i].namespace < summary[j].namespace
+		}
+		if summary[i].resource != summary[j].resource {
+			return summary[i].resource < summary[j].resource
+		}
+		return summary[i].reason < summary[j].reason
+	})
+
+	lines := make([]string, 0, len(summary))
+	for _, group := range summary {
+		lastSeenText := ""
+		if group.lastSeen.IsZero() {
+			lastSeenText = "-"
+		} else {
+			lastSeenText = group.lastSeen.Format(time.RFC3339)
+		}
+		lines = append(lines, fmt.Sprintf("%-25s │ %-60s │ %-10s │ %-20s │ %-10s │ %s",
+			lastSeenText,
+			group.resource,
+			strconv.Itoa(group.count),
+			group.reason,
+			group.namespace,
+			group.lastMessage,
+		))
+	}
+
+	return lines
 }
 
 func renderTableContent(table *tview.Table, events []string, filterText string, opts ColumnOptions) {

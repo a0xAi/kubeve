@@ -103,6 +103,7 @@ func ColumShortcuts() string {
 		{"<shift+s>", "Toggle status"},
 		{"<shift+a>", "Toggle action"},
 		{"<shift+r>", "Toggle resource"},
+		{"<shift+g>", "Toggle aggregate"},
 	}
 	var lines []string
 	for _, it := range items {
