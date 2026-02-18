@@ -20,6 +20,7 @@ func StartUI(version string, overrideNamespace string) {
 	var filterText string
 	var allEvents []string
 	var visibleEvents []string
+	var rowToVisibleEvent []int
 	var recentNamespaces []string
 	var header *Header
 	var watchCancel context.CancelFunc
@@ -50,6 +51,7 @@ func StartUI(version string, overrideNamespace string) {
 	showActionColumn := true
 	showResourceColumn := true
 	aggregateMode := false
+	wrapMessages := false
 	filterVisible := false
 
 	versionInfo, verErr := kubeClient.Discovery().ServerVersion()
@@ -103,10 +105,14 @@ func StartUI(version string, overrideNamespace string) {
 		if aggregateMode {
 			aggregateTableText = "[cyan]Aggregate"
 		}
+		wrapTableText := "[gray]No Wrap"
+		if wrapMessages {
+			wrapTableText = "[cyan]Wrap"
+		}
 		if autoScroll {
-			table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓ " + aggregateTableText)
+			table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓ " + aggregateTableText + " " + wrapTableText)
 		} else {
-			table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗ " + aggregateTableText)
+			table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗ " + aggregateTableText + " " + wrapTableText)
 		}
 	}
 
@@ -116,7 +122,8 @@ func StartUI(version string, overrideNamespace string) {
 			displayEvents = aggregateEvents(allEvents)
 		}
 		visibleEvents = filterEvents(displayEvents, filterText)
-		renderTable(table, visibleEvents, "", currentColumns())
+		_, _, tableWidth, _ := table.GetInnerRect()
+		rowToVisibleEvent = renderTable(table, visibleEvents, "", currentColumns(), wrapMessages, tableWidth)
 	}
 
 	var updateNamespace func(string)
@@ -167,6 +174,7 @@ func StartUI(version string, overrideNamespace string) {
 		))
 		allEvents = nil
 		visibleEvents = nil
+		rowToVisibleEvent = nil
 		showNamespaceColumn = namespace == metav1.NamespaceAll
 		refreshTable()
 
@@ -192,11 +200,14 @@ func StartUI(version string, overrideNamespace string) {
 
 					if autoScroll {
 						allEvents = append(allEvents, msg)
-						if aggregateMode {
+						if aggregateMode || wrapMessages {
 							refreshTable()
-							if table.GetRowCount() > 1 {
+							if aggregateMode && table.GetRowCount() > 1 {
 								table.ScrollToBeginning()
 								table.Select(1, 0)
+							} else if table.GetRowCount() > 1 {
+								table.ScrollToEnd()
+								table.Select(table.GetRowCount()-1, 0)
 							}
 						} else {
 							if matchesFilter(msg, filterText) &&
@@ -206,6 +217,7 @@ func StartUI(version string, overrideNamespace string) {
 								if len(parts) == 6 {
 									row := table.GetRowCount()
 									renderRow(table, row, parts, currentColumns())
+									rowToVisibleEvent = append(rowToVisibleEvent, len(visibleEvents)-1)
 									table.ScrollToEnd()
 									table.Select(table.GetRowCount()-1, 0)
 								}
@@ -297,6 +309,15 @@ func StartUI(version string, overrideNamespace string) {
 				table.Select(1, 0)
 			}
 			return nil
+		case event.Rune() == 'w':
+			wrapMessages = !wrapMessages
+			updateTableTitle()
+			refreshTable()
+			if table.GetRowCount() > 1 {
+				table.ScrollToEnd()
+				table.Select(table.GetRowCount()-1, 0)
+			}
+			return nil
 		case event.Rune() == 'q', event.Key() == tcell.KeyCtrlC:
 			if watchCancel != nil {
 				watchCancel()
@@ -322,8 +343,12 @@ func StartUI(version string, overrideNamespace string) {
 
 	app.SetInputCapture(handleInput)
 	table.SetSelectedFunc(func(row int, column int) {
-		if row > 0 && row-1 < len(visibleEvents) {
-			parts := strings.SplitN(visibleEvents[row-1], "│", 6)
+		if row <= 0 || row-1 >= len(rowToVisibleEvent) {
+			return
+		}
+		idx := rowToVisibleEvent[row-1]
+		if idx >= 0 && idx < len(visibleEvents) {
+			parts := strings.SplitN(visibleEvents[idx], "│", 6)
 			DetailsModal(app, frame, table, parts)
 		}
 	})

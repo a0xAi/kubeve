@@ -128,6 +128,118 @@ func filterEvents(events []string, filterText string) []string {
 	return filtered
 }
 
+func messageColumnWidth(tableWidth int, opts ColumnOptions) int {
+	if tableWidth <= 0 {
+		return 80
+	}
+
+	columns := 1 // message column
+	expansionTotal := 5
+	if opts.Timestamp {
+		columns++
+		expansionTotal++
+	}
+	if opts.Namespace {
+		columns++
+		expansionTotal++
+	}
+	if opts.Status {
+		columns++
+		expansionTotal++
+	}
+	if opts.Action {
+		columns++
+		expansionTotal++
+	}
+	if opts.Resource {
+		columns++
+		expansionTotal += 2
+	}
+
+	separatorWidth := (columns - 1) * 3 // " │ "
+	usable := tableWidth - separatorWidth
+	if usable < 20 {
+		return 20
+	}
+
+	width := (usable * 5) / expansionTotal
+	if width < 20 {
+		return 20
+	}
+	return width
+}
+
+func wrapLine(text string, width int) []string {
+	if width <= 0 || len(text) <= width {
+		return []string{text}
+	}
+
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+
+	lines := make([]string, 0, len(words))
+	current := ""
+	flush := func() {
+		if current != "" {
+			lines = append(lines, current)
+			current = ""
+		}
+	}
+
+	for _, word := range words {
+		if len(word) > width {
+			flush()
+			for len(word) > width {
+				lines = append(lines, word[:width])
+				word = word[width:]
+			}
+			current = word
+			continue
+		}
+
+		if current == "" {
+			current = word
+			continue
+		}
+		candidate := current + " " + word
+		if len(candidate) <= width {
+			current = candidate
+		} else {
+			lines = append(lines, current)
+			current = word
+		}
+	}
+	flush()
+
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func wrapMessage(text string, width int) []string {
+	if width <= 0 {
+		return []string{text}
+	}
+
+	paragraphs := strings.Split(text, "\n")
+	lines := make([]string, 0, len(paragraphs))
+	for _, paragraph := range paragraphs {
+		trimmed := strings.TrimSpace(paragraph)
+		if trimmed == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, wrapLine(trimmed, width)...)
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
 type aggregatedEvent struct {
 	namespace   string
 	resource    string
@@ -218,19 +330,57 @@ func aggregateEvents(events []string) []string {
 	return lines
 }
 
-func renderTableContent(table *tview.Table, events []string, filterText string, opts ColumnOptions) {
+func renderTableContent(
+	table *tview.Table,
+	events []string,
+	filterText string,
+	opts ColumnOptions,
+	wrapMessages bool,
+	tableWidth int,
+) []int {
+	rowToEvent := make([]int, 0, len(events))
 	row := 1
-	for _, line := range filterEvents(events, filterText) {
+	msgWidth := messageColumnWidth(tableWidth, opts)
+	for eventIdx, line := range filterEvents(events, filterText) {
 		parts := strings.SplitN(line, "│", 6)
 		if len(parts) == 6 {
-			renderRow(table, row, parts, opts)
+			if !wrapMessages {
+				renderRow(table, row, parts, opts)
+				rowToEvent = append(rowToEvent, eventIdx)
+				row++
+				continue
+			}
+
+			wrapped := wrapMessage(strings.TrimSpace(parts[5]), msgWidth)
+			if len(wrapped) == 0 {
+				wrapped = []string{""}
+			}
+
+			first := append([]string(nil), parts...)
+			first[5] = wrapped[0]
+			renderRow(table, row, first, opts)
+			rowToEvent = append(rowToEvent, eventIdx)
 			row++
+
+			for _, cont := range wrapped[1:] {
+				renderRow(table, row, []string{"", "", "", "", "", cont}, opts)
+				rowToEvent = append(rowToEvent, eventIdx)
+				row++
+			}
 		}
 	}
+	return rowToEvent
 }
 
-func renderTable(table *tview.Table, events []string, filterText string, opts ColumnOptions) {
+func renderTable(
+	table *tview.Table,
+	events []string,
+	filterText string,
+	opts ColumnOptions,
+	wrapMessages bool,
+	tableWidth int,
+) []int {
 	table.Clear()
 	renderTableHeader(table, opts)
-	renderTableContent(table, events, filterText, opts)
+	return renderTableContent(table, events, filterText, opts, wrapMessages, tableWidth)
 }
