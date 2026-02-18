@@ -349,7 +349,7 @@ func StartUI(version string, overrideNamespace string) {
 		idx := rowToVisibleEvent[row-1]
 		if idx >= 0 && idx < len(visibleEvents) {
 			parts := strings.SplitN(visibleEvents[idx], "│", 6)
-			DetailsModal(app, frame, table, parts)
+			DetailsModal(app, frame, table, parts, kubeClient)
 		}
 	})
 

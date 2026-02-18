@@ -86,6 +86,7 @@ func ActionShortcuts() string {
 	items := []struct{ key, desc string }{
 		{"</>", "Toggle filter"},
 		{"<w>", "Toggle wrap"},
+		{"<enter>", "Open drill-down"},
 		{"<ctrl+s>", "Toggle autoscroll"},
 		{"<ctrl+b>", "Go to last event"},
 		{"<ctrl+n>", "Change namespace"},
