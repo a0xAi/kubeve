@@ -97,15 +97,27 @@ func renderRow(table *tview.Table, row int, parts []string, opts ColumnOptions) 
 	table.SetCell(row, col, tview.NewTableCell(strings.TrimSpace(parts[5])).SetExpansion(5))
 }
 
+func matchesFilter(line string, filterText string) bool {
+	return strings.Contains(line, filterText)
+}
+
+func filterEvents(events []string, filterText string) []string {
+	filtered := make([]string, 0, len(events))
+	for _, line := range events {
+		if matchesFilter(line, filterText) {
+			filtered = append(filtered, line)
+		}
+	}
+	return filtered
+}
+
 func renderTableContent(table *tview.Table, events []string, filterText string, opts ColumnOptions) {
 	row := 1
-	for _, line := range events {
-		if strings.Contains(line, filterText) {
-			parts := strings.SplitN(line, "│", 6)
-			if len(parts) == 6 {
-				renderRow(table, row, parts, opts)
-				row++
-			}
+	for _, line := range filterEvents(events, filterText) {
+		parts := strings.SplitN(line, "│", 6)
+		if len(parts) == 6 {
+			renderRow(table, row, parts, opts)
+			row++
 		}
 	}
 }

@@ -8,13 +8,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func WatchEvents(namespace string, eventHandler func(event *corev1.Event)) {
+func WatchEvents(ctx context.Context, namespace string, eventHandler func(event *corev1.Event)) error {
 	_, _, clientset, _, err := Kinit(namespace)
-	ctx := context.TODO()
+	if err != nil {
+		return fmt.Errorf("initialize kubernetes client: %w", err)
+	}
+
 	evList, err := clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		fmt.Println("Error listing events:", err)
-		return
+		if ctx.Err() != nil {
+			return nil
+		}
+		return fmt.Errorf("list events: %w", err)
 	}
 	resourceVersion := evList.ResourceVersion
 
@@ -22,14 +27,26 @@ func WatchEvents(namespace string, eventHandler func(event *corev1.Event)) {
 		ResourceVersion: resourceVersion,
 	})
 	if err != nil {
-		fmt.Println("Failed to watch events:", err)
-		return
+		if ctx.Err() != nil {
+			return nil
+		}
+		return fmt.Errorf("watch events: %w", err)
 	}
+	defer watcher.Stop()
+
 	ch := watcher.ResultChan()
 
-	for evt := range ch {
-		if event, ok := evt.Object.(*corev1.Event); ok {
-			eventHandler(event)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case evt, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if event, ok := evt.Object.(*corev1.Event); ok {
+				eventHandler(event)
+			}
 		}
 	}
 }

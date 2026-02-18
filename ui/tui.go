@@ -1,9 +1,9 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -19,8 +19,11 @@ import (
 func StartUI(version string, overrideNamespace string) {
 	var filterText string
 	var allEvents []string
+	var visibleEvents []string
 	var recentNamespaces []string
 	var header *Header
+	var watchCancel context.CancelFunc
+	var watchGeneration int
 	var bgCol tcell.Color
 	var textCol tcell.Color
 	cfg := config.Load()
@@ -79,9 +82,42 @@ func StartUI(version string, overrideNamespace string) {
 
 	table := NewTable(" [::b][green]Autoscroll ✓ ")
 
+	currentColumns := func() ColumnOptions {
+		return ColumnOptions{
+			Timestamp: showTimestampColumn,
+			Namespace: showNamespaceColumn,
+			Status:    showStatusColumn,
+			Action:    showActionColumn,
+			Resource:  showResourceColumn,
+		}
+	}
+
+	updateTableTitle := func() {
+		filterTableText := ""
+		if filterText != "" {
+			filterTableText = "[yellow] [Filter: " + filterText + "]"
+		}
+		if autoScroll {
+			table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓")
+		} else {
+			table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗")
+		}
+	}
+
+	refreshTable := func() {
+		visibleEvents = filterEvents(allEvents, filterText)
+		renderTable(table, allEvents, filterText, currentColumns())
+	}
+
 	var updateNamespace func(string)
 
 	updateNamespace = func(newNS string) {
+		if watchCancel != nil {
+			watchCancel()
+		}
+		watchGeneration++
+		currentWatchGeneration := watchGeneration
+
 		if newNS == "" {
 			namespace = metav1.NamespaceAll
 		} else {
@@ -120,49 +156,56 @@ func StartUI(version string, overrideNamespace string) {
 			clusterName, namespaceText, versionInfo.GitVersion, version,
 		))
 		allEvents = nil
-		table.Clear()
+		visibleEvents = nil
 		showNamespaceColumn = namespace == metav1.NamespaceAll
-		renderTableHeader(table, ColumnOptions{
-			Timestamp: showTimestampColumn,
-			Namespace: showNamespaceColumn,
-			Status:    showStatusColumn,
-			Action:    showActionColumn,
-			Resource:  showResourceColumn,
-		})
+		refreshTable()
 
-		go kube.WatchEvents(namespace, func(event *corev1.Event) {
-			app.QueueUpdateDraw(func() {
-				resource := fmt.Sprintf("%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Name)
-				msg := fmt.Sprintf("%-25s │ %-60s │ %-10s │ %-20s │ %-10s │ %s\n",
-					event.LastTimestamp.Time.Format(time.RFC3339),
-					resource,
-					event.Type,
-					event.Reason,
-					event.Namespace,
-					event.Message,
-				)
-				if autoScroll {
-					allEvents = append(allEvents, msg)
-					matched, _ := regexp.MatchString(filterText, msg)
-					if matched &&
-						(namespace == metav1.NamespaceAll || event.Namespace == namespace) {
-						parts := strings.SplitN(msg, "│", 6)
-						if len(parts) == 6 {
-							row := table.GetRowCount()
-							renderRow(table, row, parts, ColumnOptions{
-								Timestamp: showTimestampColumn,
-								Namespace: showNamespaceColumn,
-								Status:    showStatusColumn,
-								Action:    showActionColumn,
-								Resource:  showResourceColumn,
-							})
-							table.ScrollToEnd()
-							table.Select(table.GetRowCount()-1, 0)
+		watchCtx, cancel := context.WithCancel(context.Background())
+		watchCancel = cancel
+
+		go func(ns string, generation int) {
+			err := kube.WatchEvents(watchCtx, ns, func(event *corev1.Event) {
+				app.QueueUpdateDraw(func() {
+					if generation != watchGeneration {
+						return
+					}
+
+					resource := fmt.Sprintf("%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Name)
+					msg := fmt.Sprintf("%-25s │ %-60s │ %-10s │ %-20s │ %-10s │ %s\n",
+						event.LastTimestamp.Time.Format(time.RFC3339),
+						resource,
+						event.Type,
+						event.Reason,
+						event.Namespace,
+						event.Message,
+					)
+
+					if autoScroll {
+						allEvents = append(allEvents, msg)
+						if matchesFilter(msg, filterText) &&
+							(namespace == metav1.NamespaceAll || event.Namespace == namespace) {
+							visibleEvents = append(visibleEvents, msg)
+							parts := strings.SplitN(msg, "│", 6)
+							if len(parts) == 6 {
+								row := table.GetRowCount()
+								renderRow(table, row, parts, currentColumns())
+								table.ScrollToEnd()
+								table.Select(table.GetRowCount()-1, 0)
+							}
 						}
 					}
-				}
+				})
 			})
-		})
+			if err != nil {
+				app.QueueUpdateDraw(func() {
+					if generation != watchGeneration {
+						return
+					}
+					updateTableTitle()
+					table.SetTitle(fmt.Sprintf("%s [red](watch error: %v)", table.GetTitle(), err))
+				})
+			}
+		}(namespace, currentWatchGeneration)
 	}
 	filter := NewFilter()
 
@@ -173,30 +216,8 @@ func StartUI(version string, overrideNamespace string) {
 	filter.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			filterText = filter.GetText()
-			filterTableText := ""
-			if filterText != "" {
-				filterTableText = "[yellow] [Filter: " + filterText + "]"
-			}
-			if autoScroll {
-				table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓")
-			} else {
-				table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗")
-			}
-			table.Clear()
-			renderTableHeader(table, ColumnOptions{
-				Timestamp: showTimestampColumn,
-				Namespace: showNamespaceColumn,
-				Status:    showStatusColumn,
-				Action:    showActionColumn,
-				Resource:  showResourceColumn,
-			})
-			renderTableContent(table, allEvents, filterText, ColumnOptions{
-				Timestamp: showTimestampColumn,
-				Namespace: showNamespaceColumn,
-				Status:    showStatusColumn,
-				Action:    showActionColumn,
-				Resource:  showResourceColumn,
-			})
+			updateTableTitle()
+			refreshTable()
 			flex.ResizeItem(filterContainer, 0, 0)
 			filterVisible = false
 			app.SetFocus(table)
@@ -212,15 +233,7 @@ func StartUI(version string, overrideNamespace string) {
 		case event.Key() == tcell.KeyCtrlS:
 			autoScroll = !autoScroll
 			filterText = filter.GetText()
-			filterTableText := ""
-			if filterText != "" {
-				filterTableText = "[yellow] [Filter: " + filterText + "]"
-			}
-			if autoScroll {
-				table.SetTitle("[::b]" + filterTableText + "[green]Autoscroll ✓")
-			} else {
-				table.SetTitle("[::b]" + filterTableText + "[red]Autoscroll ✗")
-			}
+			updateTableTitle()
 			return nil
 		case event.Key() == tcell.KeyCtrlB:
 			table.ScrollToEnd()
@@ -243,45 +256,24 @@ func StartUI(version string, overrideNamespace string) {
 			return nil
 		case event.Rune() == 'T':
 			showTimestampColumn = !showTimestampColumn
-			renderTable(table, allEvents, filterText, ColumnOptions{
-				Timestamp: showTimestampColumn,
-				Namespace: showNamespaceColumn,
-				Status:    showStatusColumn,
-				Action:    showActionColumn,
-				Resource:  showResourceColumn,
-			})
+			refreshTable()
 			return nil
 		case event.Rune() == 'A':
 			showActionColumn = !showActionColumn
-			renderTable(table, allEvents, filterText, ColumnOptions{
-				Timestamp: showTimestampColumn,
-				Namespace: showNamespaceColumn,
-				Status:    showStatusColumn,
-				Action:    showActionColumn,
-				Resource:  showResourceColumn,
-			})
+			refreshTable()
 			return nil
 		case event.Rune() == 'S':
 			showStatusColumn = !showStatusColumn
-			renderTable(table, allEvents, filterText, ColumnOptions{
-				Timestamp: showTimestampColumn,
-				Namespace: showNamespaceColumn,
-				Status:    showStatusColumn,
-				Action:    showActionColumn,
-				Resource:  showResourceColumn,
-			})
+			refreshTable()
 			return nil
 		case event.Rune() == 'R':
 			showResourceColumn = !showResourceColumn
-			renderTable(table, allEvents, filterText, ColumnOptions{
-				Timestamp: showTimestampColumn,
-				Namespace: showNamespaceColumn,
-				Status:    showStatusColumn,
-				Action:    showActionColumn,
-				Resource:  showResourceColumn,
-			})
+			refreshTable()
 			return nil
 		case event.Rune() == 'q', event.Key() == tcell.KeyCtrlC:
+			if watchCancel != nil {
+				watchCancel()
+			}
 			app.Stop()
 			return nil
 		default:
@@ -303,8 +295,8 @@ func StartUI(version string, overrideNamespace string) {
 
 	app.SetInputCapture(handleInput)
 	table.SetSelectedFunc(func(row int, column int) {
-		if row > 0 && row-1 < len(allEvents) {
-			parts := strings.SplitN(allEvents[row-1], "│", 6)
+		if row > 0 && row-1 < len(visibleEvents) {
+			parts := strings.SplitN(visibleEvents[row-1], "│", 6)
 			DetailsModal(app, frame, table, parts)
 		}
 	})
@@ -318,6 +310,12 @@ func StartUI(version string, overrideNamespace string) {
 	app.SetRoot(frame, true)
 	app.SetFocus(table)
 	if err := app.Run(); err != nil {
+		if watchCancel != nil {
+			watchCancel()
+		}
 		panic(err)
+	}
+	if watchCancel != nil {
+		watchCancel()
 	}
 }
