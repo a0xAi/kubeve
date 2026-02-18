@@ -84,6 +84,7 @@ func NewHeader(
 
 func ActionShortcuts() string {
 	items := []struct{ key, desc string }{
+		{":", "Command palette"},
 		{"</>", "Toggle filter"},
 		{"<w>", "Toggle wrap"},
 		{"<enter>", "Open drill-down"},

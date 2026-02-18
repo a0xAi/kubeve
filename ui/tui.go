@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -254,6 +255,280 @@ func StartUI(version string, overrideNamespace string) {
 		}
 	})
 
+	shortText := func(value string, max int) string {
+		if max <= 0 || len(value) <= max {
+			return value
+		}
+		return value[:max-3] + "..."
+	}
+
+	selectTableRow := func(row int) {
+		if row <= 0 || row >= table.GetRowCount() {
+			return
+		}
+		table.Select(row, 0)
+	}
+
+	resolveNamespace := func(raw string) (string, bool) {
+		query := strings.TrimSpace(raw)
+		if query == "" {
+			return "", false
+		}
+		if strings.EqualFold(query, "all") || query == "*" {
+			return "", true
+		}
+
+		for _, ns := range namespaceList {
+			if strings.EqualFold(ns, query) {
+				return ns, true
+			}
+		}
+
+		best := ""
+		bestScore := 0
+		for _, ns := range namespaceList {
+			score, ok := fuzzyMatchScore(query, ns)
+			if ok && score > bestScore {
+				best = ns
+				bestScore = score
+			}
+		}
+		if best == "" {
+			return "", false
+		}
+		return best, true
+	}
+
+	toggleAutoScroll := func() {
+		autoScroll = !autoScroll
+		filterText = filter.GetText()
+		updateTableTitle()
+	}
+
+	toggleTimestamp := func() {
+		showTimestampColumn = !showTimestampColumn
+		refreshTable()
+	}
+
+	toggleAction := func() {
+		showActionColumn = !showActionColumn
+		refreshTable()
+	}
+
+	toggleStatus := func() {
+		showStatusColumn = !showStatusColumn
+		refreshTable()
+	}
+
+	toggleResource := func() {
+		showResourceColumn = !showResourceColumn
+		refreshTable()
+	}
+
+	toggleAggregate := func() {
+		aggregateMode = !aggregateMode
+		updateTableTitle()
+		refreshTable()
+		if aggregateMode && table.GetRowCount() > 1 {
+			selectTableRow(1)
+		}
+	}
+
+	toggleWrap := func() {
+		wrapMessages = !wrapMessages
+		updateTableTitle()
+		refreshTable()
+		if table.GetRowCount() > 1 {
+			selectTableRow(table.GetRowCount() - 1)
+		}
+	}
+
+	setFilterValue := func(value string) {
+		filterText = value
+		filter.SetText(value)
+		updateTableTitle()
+		refreshTable()
+	}
+
+	buildJumpTargets := func() []CommandPaletteJump {
+		firstRowByEvent := make(map[int]int)
+		for rowOffset, eventIdx := range rowToVisibleEvent {
+			if _, exists := firstRowByEvent[eventIdx]; !exists {
+				firstRowByEvent[eventIdx] = rowOffset + 1
+			}
+		}
+
+		eventIndexes := make([]int, 0, len(firstRowByEvent))
+		for eventIdx := range firstRowByEvent {
+			if eventIdx >= 0 && eventIdx < len(visibleEvents) {
+				eventIndexes = append(eventIndexes, eventIdx)
+			}
+		}
+		sort.Slice(eventIndexes, func(i, j int) bool {
+			return firstRowByEvent[eventIndexes[i]] > firstRowByEvent[eventIndexes[j]]
+		})
+
+		jumps := make([]CommandPaletteJump, 0, len(eventIndexes))
+		for _, eventIdx := range eventIndexes {
+			row := firstRowByEvent[eventIdx]
+			line := strings.TrimSpace(visibleEvents[eventIdx])
+			label := shortText(line, 120)
+			detail := fmt.Sprintf("row %d", row)
+
+			parts := strings.SplitN(visibleEvents[eventIdx], "│", 6)
+			if len(parts) == 6 {
+				timestamp := strings.TrimSpace(parts[0])
+				resource := strings.TrimSpace(parts[1])
+				reason := strings.TrimSpace(parts[3])
+				namespace := strings.TrimSpace(parts[4])
+				message := strings.TrimSpace(parts[5])
+				label = shortText(fmt.Sprintf("%s  %s  %s", resource, reason, message), 120)
+				detail = shortText(fmt.Sprintf("row %d • %s • ns=%s", row, timestamp, namespace), 120)
+			}
+
+			jumps = append(jumps, CommandPaletteJump{
+				Label:  label,
+				Detail: detail,
+				Search: line,
+				Row:    row,
+			})
+		}
+		return jumps
+	}
+
+	jumpToBestMatch := func(raw string) bool {
+		query := strings.TrimSpace(raw)
+		if query == "" {
+			return false
+		}
+
+		bestRow := -1
+		bestScore := 0
+		firstRowByEvent := make(map[int]int)
+		for rowOffset, eventIdx := range rowToVisibleEvent {
+			if _, exists := firstRowByEvent[eventIdx]; !exists {
+				firstRowByEvent[eventIdx] = rowOffset + 1
+			}
+		}
+
+		for eventIdx, row := range firstRowByEvent {
+			if eventIdx < 0 || eventIdx >= len(visibleEvents) {
+				continue
+			}
+			score, ok := fuzzyMatchScore(query, visibleEvents[eventIdx])
+			if !ok {
+				continue
+			}
+			if bestRow == -1 || score > bestScore || (score == bestScore && row > bestRow) {
+				bestScore = score
+				bestRow = row
+			}
+		}
+
+		if bestRow <= 0 {
+			return false
+		}
+		selectTableRow(bestRow)
+		return true
+	}
+
+	openCommandPalette := func() {
+		commands := []CommandPaletteCommand{
+			{
+				Name:        "ns",
+				Aliases:     []string{"namespace"},
+				Description: "Switch namespace: ns <name> (or ns all).",
+				AcceptsArg:  true,
+				Run: func(arg string) string {
+					if strings.TrimSpace(arg) == "" {
+						NamespacesModal(app, frame, table, namespaceList, updateNamespace)
+						return "Opened namespace selector"
+					}
+					ns, ok := resolveNamespace(arg)
+					if !ok {
+						updateTableTitle()
+						table.SetTitle(fmt.Sprintf("%s [red](namespace not found: %s)", table.GetTitle(), strings.TrimSpace(arg)))
+						return "Namespace not found"
+					}
+					updateNamespace(ns)
+					return "Namespace updated"
+				},
+			},
+			{
+				Name:        "all",
+				Aliases:     []string{"ns-all"},
+				Description: "Switch to all namespaces.",
+				Run: func(arg string) string {
+					updateNamespace("")
+					return "Switched to all namespaces"
+				},
+			},
+			{
+				Name:        "filter",
+				Aliases:     []string{"f"},
+				Description: "Set filter text: filter <text>.",
+				AcceptsArg:  true,
+				Run: func(arg string) string {
+					setFilterValue(strings.TrimSpace(arg))
+					return "Filter updated"
+				},
+			},
+			{
+				Name:        "clear",
+				Aliases:     []string{"clear-filter"},
+				Description: "Clear current filter.",
+				Run: func(arg string) string {
+					setFilterValue("")
+					return "Filter cleared"
+				},
+			},
+			{
+				Name:        "jump",
+				Aliases:     []string{"j"},
+				Description: "Fuzzy jump to event row: jump <query>.",
+				AcceptsArg:  true,
+				Run: func(arg string) string {
+					if !jumpToBestMatch(arg) {
+						updateTableTitle()
+						table.SetTitle(fmt.Sprintf("%s [red](no match for: %s)", table.GetTitle(), strings.TrimSpace(arg)))
+						return "No jump match"
+					}
+					return "Jumped to matching row"
+				},
+			},
+			{
+				Name:        "wrap",
+				Description: "Toggle wrapped messages.",
+				Run: func(arg string) string {
+					toggleWrap()
+					return "Wrap toggled"
+				},
+			},
+			{
+				Name:        "aggregate",
+				Aliases:     []string{"agg"},
+				Description: "Toggle event aggregation mode.",
+				Run: func(arg string) string {
+					toggleAggregate()
+					return "Aggregate toggled"
+				},
+			},
+			{
+				Name:        "autoscroll",
+				Aliases:     []string{"follow"},
+				Description: "Toggle autoscroll mode.",
+				Run: func(arg string) string {
+					toggleAutoScroll()
+					return "Autoscroll toggled"
+				},
+			},
+		}
+
+		CommandPaletteModal(app, frame, table, commands, buildJumpTargets(), func(row int) {
+			selectTableRow(row)
+		})
+	}
+
 	handleInput := func(event *tcell.EventKey) *tcell.EventKey {
 		// If filter is focused, let normal typing work and ignore shortcuts.
 		if app.GetFocus() == filter {
@@ -261,13 +536,14 @@ func StartUI(version string, overrideNamespace string) {
 		}
 		switch {
 		case event.Key() == tcell.KeyCtrlS:
-			autoScroll = !autoScroll
-			filterText = filter.GetText()
-			updateTableTitle()
+			toggleAutoScroll()
 			return nil
 		case event.Key() == tcell.KeyCtrlB:
 			table.ScrollToEnd()
 			table.Select(table.GetRowCount()-1, 0)
+			return nil
+		case event.Rune() == ':':
+			openCommandPalette()
 			return nil
 		case event.Rune() == '/':
 			if filterVisible {
@@ -285,38 +561,22 @@ func StartUI(version string, overrideNamespace string) {
 			NamespacesModal(app, frame, table, namespaceList, updateNamespace)
 			return nil
 		case event.Rune() == 'T':
-			showTimestampColumn = !showTimestampColumn
-			refreshTable()
+			toggleTimestamp()
 			return nil
 		case event.Rune() == 'A':
-			showActionColumn = !showActionColumn
-			refreshTable()
+			toggleAction()
 			return nil
 		case event.Rune() == 'S':
-			showStatusColumn = !showStatusColumn
-			refreshTable()
+			toggleStatus()
 			return nil
 		case event.Rune() == 'R':
-			showResourceColumn = !showResourceColumn
-			refreshTable()
+			toggleResource()
 			return nil
 		case event.Rune() == 'G':
-			aggregateMode = !aggregateMode
-			updateTableTitle()
-			refreshTable()
-			if aggregateMode && table.GetRowCount() > 1 {
-				table.ScrollToBeginning()
-				table.Select(1, 0)
-			}
+			toggleAggregate()
 			return nil
 		case event.Rune() == 'w':
-			wrapMessages = !wrapMessages
-			updateTableTitle()
-			refreshTable()
-			if table.GetRowCount() > 1 {
-				table.ScrollToEnd()
-				table.Select(table.GetRowCount()-1, 0)
-			}
+			toggleWrap()
 			return nil
 		case event.Rune() == 'q', event.Key() == tcell.KeyCtrlC:
 			if watchCancel != nil {
