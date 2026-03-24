@@ -49,3 +49,7 @@ Built-in themes (select in app with `Ctrl+T` or `:theme`):
 - `terminal-green`
 - `cobalt`
 - `ember`
+
+## Special Thanks
+Special thanks for Žygimantas Polanskis (@zygias) for supporting project.
+
